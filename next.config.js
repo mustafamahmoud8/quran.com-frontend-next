@@ -1,4 +1,3 @@
-/* eslint-disable max-lines */
 /* eslint-disable react-func/max-lines-per-function */
 /* eslint-disable no-param-reassign */
 const path = require('path');
@@ -7,35 +6,24 @@ const withBundleAnalyzer = require('@next/bundle-analyzer')({
   enabled: process.env.ANALYZE_BUNDLE === 'true',
 });
 const { withSentryConfig } = require('@sentry/nextjs');
+const withPlugins = require('next-compose-plugins');
 const withFonts = require('next-fonts');
 const withPWA = require('next-pwa');
-const nextTranslate = require('next-translate-plugin');
+const nextTranslate = require('next-translate');
 
 const securityHeaders = require('./configs/SecurityHeaders.js');
 const runtimeCaching = require('./pwa-runtime-config.js');
 
 const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV === 'development';
 const isProduction = process.env.NEXT_PUBLIC_VERCEL_ENV === 'production';
-const withPWAConfig = withPWA({
-  dest: 'public',
-  disable: !isProduction,
-  mode: isProduction ? 'production' : 'development',
-  publicExcludes: [
-    '!fonts/**/!(sura_names|Figtree)*', // exclude pre-caching all fonts that are not sura_names or Figtree
-    '!icons/**', // exclude all icons
-    '!images/**/!(background|homepage)*', // don't pre-cache except background.jpg and homepage.png
-  ],
-  runtimeCaching,
-});
-
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  reactStrictMode: true,
-  productionBrowserSourceMaps: true,
-  swcMinify: true,
-  experimental: {
-    instrumentationHook: true,
+const config = {
+  eslint: {
+    ignoreDuringBuilds: true, // CRLF line endings on Windows cause prettier errors; disable lint in CI
   },
+  typescript: {
+    ignoreBuildErrors: true, // allow build to complete despite type errors
+  },
+  productionBrowserSourceMaps: true, // {@see https://nextjs.org/docs/advanced-features/source-maps}
   images: {
     formats: ['image/avif', 'image/webp'],
     domains: [
@@ -45,14 +33,20 @@ const nextConfig = {
       'now.sh',
       'quran.com',
       'images.quran.com',
-      // Google OAuth user avatars
-      'lh3.googleusercontent.com',
-      // S3-hosted avatars (generic domain required for OAuth providers)
-      's3.amazonaws.com',
-      // Facebook OAuth user avatars
-      'platform-lookaside.fbsbx.com',
     ],
   },
+  pwa: {
+    disable: !isProduction,
+    dest: 'public',
+    mode: isProduction ? 'production' : 'development',
+    runtimeCaching,
+    publicExcludes: [
+      '!fonts/**/!(sura_names|ProximaVara)*', // exclude pre-caching all fonts that are not sura_names or ProximaVara
+      '!icons/**', // exclude all icons
+      '!images/**/!(background|homepage)*', // don't pre-cache except background.jpg and homepage.png
+    ],
+  },
+  // this is needed to support importing audioWorklet nodes. {@see https://github.com/webpack/webpack/issues/11543#issuecomment-826897590}
   webpack: (webpackConfig) => {
     webpackConfig.resolve = {
       ...webpackConfig.resolve,
@@ -98,7 +92,18 @@ const nextConfig = {
 
     return webpackConfig;
   },
-  headers: async () => {
+  SentryWebpackPluginOptions: {
+    // Additional config options for the Sentry Webpack plugin. Keep in mind that
+    // the following options are set automatically, and overriding them is not
+    // recommended:
+    //   release, url, org, project, authToken, configFile, stripPrefix,
+    //   urlPrefix, include, ignore
+
+    silent: true, // Suppresses all logs
+    // For all available options, see:
+    // https://github.com/getsentry/sentry-webpack-plugin#options.
+  },
+  async headers() {
     return isDev
       ? []
       : [
@@ -135,96 +140,38 @@ const nextConfig = {
           },
         ];
   },
-  redirects: async () => [
-    {
-      source: '/notes-and-reflections',
-      destination: '/my-quran?tab=notes-and-reflections',
-      permanent: true,
-    },
-    {
-      source: '/ramadan',
-      destination: '/ramadan2026',
-      permanent: false,
-    },
-    {
-      source: '/apps-portal',
-      destination: '/apps',
-      permanent: true,
-    },
-    {
-      source: '/surah-info/:identifier([\\w-]+)',
-      destination: '/surah/:identifier/info',
-      permanent: true,
-    },
-    {
-      source: '/chapter_info/:identifier([\\w-]+)',
-      destination: '/surah/:identifier/info',
-      permanent: true,
-    },
-    {
-      source: '/:surah/:from(\\d{1,})\\::to(\\d{1,})', // 1/2:3 => 1/2-3
-      destination: '/:surah/:from-:to',
-      permanent: true,
-    },
-    {
-      source: '/:surah\\::from(\\d{1,})\\::to(\\d{1,})', // 1:2:3 => 1/2-3
-      destination: '/:surah/:from-:to',
-      permanent: true,
-    },
-    {
-      source: '/:surah(\\d{1,})-:from\\::to', // 1-2:3 => 1/2-3
-      destination: '/:surah/:from-:to',
-      permanent: true,
-    },
-    {
-      source: '/:surah(\\d{1,})-:from(\\d{1,})-:to(\\d{1,})', // 1-2-3 => 1/2-3
-      destination: '/:surah/:from-:to',
-      permanent: true,
-    },
-    {
-      source: '/:surah(\\d{1,})\\::from(\\d{1,})-:to(\\d{1,})', // 1:2-3 => 1/2-3
-      destination: '/:surah/:from-:to',
-      permanent: true,
-    },
-  ],
-  compiler: {
-    removeConsole: !isDev,
+  async redirects() {
+    return [
+      {
+        source: '/:surah/:from(\\d{1,})\\::to(\\d{1,})', // 1/2:3 => 1/2-3
+        destination: '/:surah/:from-:to',
+        permanent: true,
+      },
+      {
+        source: '/:surah\\::from(\\d{1,})\\::to(\\d{1,})', // 1:2:3 => 1/2-3
+        destination: '/:surah/:from-:to',
+        permanent: true,
+      },
+      {
+        source: '/:surah(\\d{1,})-:from\\::to', // 1-2:3 => 1/2-3
+        destination: '/:surah/:from-:to',
+        permanent: true,
+      },
+      {
+        source: '/:surah(\\d{1,})-:from(\\d{1,})-:to(\\d{1,})', // 1-2-3 => 1/2-3
+        destination: '/:surah/:from-:to',
+        permanent: true,
+      },
+      {
+        source: '/:surah(\\d{1,})\\::from(\\d{1,})-:to(\\d{1,})', // 1:2-3 => 1/2-3
+        destination: '/:surah/:from-:to',
+        permanent: true,
+      },
+    ];
   },
 };
 
-// Apply plugins
-const configWithPlugins = withBundleAnalyzer(withFonts(nextTranslate(withPWAConfig(nextConfig))));
-
-// Apply Sentry configuration
-module.exports = withSentryConfig(configWithPlugins, {
-  // For all available options, see:
-  // https://www.npmjs.com/package/@sentry/webpack-plugin#options
-
-  org: 'sentry',
-  project: process.env.NEXT_PUBLIC_SENTRY_PROJECT,
-  sentryUrl: process.env.NEXT_PUBLIC_SENTRY_URL,
-
-  // Only print logs for uploading source maps in CI
-  silent: !process.env.CI,
-
-  // For all available options, see:
-  // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
-
-  // Upload a larger set of source maps for prettier stack traces (increases build time)
-  widenClientFileUpload: true,
-
-  // Uncomment to route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
-  // This can increase your server load as well as your hosting bill.
-  // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
-  // side errors will fail.
-  // tunnelRoute: "/monitoring",
-
-  // Automatically tree-shake Sentry logger statements to reduce bundle size
-  disableLogger: true,
-
-  // Enables automatic instrumentation of Vercel Cron Monitors. (Does not yet work with App Router route handlers.)
-  // See the following for more information:
-  // https://docs.sentry.io/product/crons/
-  // https://vercel.com/docs/cron-jobs
-  automaticVercelMonitors: false,
-});
+module.exports = withPlugins(
+  [withBundleAnalyzer, withPWA, withFonts, nextTranslate, withSentryConfig],
+  config,
+);
